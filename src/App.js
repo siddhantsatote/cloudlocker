@@ -945,10 +945,10 @@ export default function FileVaultSupabase() {
               </div>
               <div className="text-center md:text-right">
                 <p className="text-sm">
-                  A college project showcasing modern web development
+                  Created by nexus
                 </p>
                 <p className="text-sm mt-2">
-                  Built with React, Supabase, and ❤️
+                  Built with React, Supabase.
                 </p>
               </div>
             </div>
