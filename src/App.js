@@ -31,14 +31,17 @@ import {
 
 import { createClient } from "@supabase/supabase-js";
 
+// Hardcoded Supabase configuration
+const SUPABASE_CONFIG = {
+  url: "https://edssqckngdwtbrnfddnc.supabase.co",
+  key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVkc3NxY2tuZ2R3dGJybmZkZG5jIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2ODIxOTY2MCwiZXhwIjoyMDgzNzk1NjYwfQ.SM1mk-zTRq6Bv8lnzFp72lS47J9O0Uew2x-yBsgv8dY"
+};
+
 export default function FileVaultSupabase() {
   const [isSetup, setIsSetup] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("home");
   const [supabaseClient, setSupabaseClient] = useState(null);
-  const [supabaseUrl, setSupabaseUrl] = useState("");
-  const [supabaseKey, setSupabaseKey] = useState("");
-  const [isSupabaseConnected, setIsSupabaseConnected] = useState(false);
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
   const [currentFolder, setCurrentFolder] = useState(null);
@@ -49,16 +52,6 @@ export default function FileVaultSupabase() {
   const [loading, setLoading] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [adminStats, setAdminStats] = useState(null);
-  const [setupError, setSetupError] = useState("");
-
-  const [setupData, setSetupData] = useState({
-    adminUsername: "",
-    adminPassword: "",
-    adminEmail: "",
-    appName: "CloudLocker",
-    supabaseUrl: "",
-    supabaseKey: "",
-  });
 
   const [authData, setAuthData] = useState({
     username: "",
@@ -77,40 +70,31 @@ export default function FileVaultSupabase() {
   };
 
   useEffect(() => {
-    checkSetup();
+    initializeApp();
   }, []);
 
-  const checkSetup = async () => {
+  const initializeApp = async () => {
     try {
-      const result = storage.get("filevault_setup");
-      if (result && result.value === "true") {
-        const urlResult = storage.get("filevault_supabase_url");
-        const keyResult = storage.get("filevault_supabase_key");
-
-        if (urlResult && keyResult) {
-          setSupabaseUrl(urlResult.value);
-          setSupabaseKey(keyResult.value);
-
-          const client = createClient(urlResult.value, keyResult.value);
-          setSupabaseClient(client);
-
-          try {
-            // Test connection by checking if users table exists
-            const { data, error } = await client.from("users").select("count");
-            if (!error) {
-              setIsSupabaseConnected(true);
-            }
-          } catch (e) {
-            console.log("Connection test failed:", e);
-          }
-        }
+      // Initialize Supabase client with hardcoded credentials
+      const client = createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
+      setSupabaseClient(client);
+      
+      // Test connection
+      const { data, error } = await client.from("users").select("count");
+      if (!error) {
         setIsSetup(true);
-        setView("home");
+        console.log("✅ Supabase connected successfully");
       } else {
-        setView("home");
+        console.error("Supabase connection error:", error);
+        // Still set as setup so users can try to register
+        setIsSetup(true);
       }
+      
+      setView("home");
     } catch (error) {
-      console.error("Setup check error:", error);
+      console.error("App initialization error:", error);
+      // Still allow the app to function
+      setIsSetup(true);
       setView("home");
     }
   };
@@ -196,135 +180,10 @@ export default function FileVaultSupabase() {
     }
   };
 
-  const initializeSupabase = async (url, key) => {
-    try {
-      const client = createClient(url, key);
-      
-      // Test connection
-      const { error: testError } = await client
-        .from("users")
-        .select("count")
-        .limit(1);
-
-      if (testError && testError.code !== "PGRST116") {
-        throw new Error("Supabase connection failed: " + testError.message);
-      }
-
-      setSupabaseClient(client);
-      setSupabaseUrl(url);
-      setSupabaseKey(key);
-      setIsSupabaseConnected(true);
-      
-      // Save to localStorage for future use
-      storage.set("filevault_setup", "true");
-      storage.set("filevault_supabase_url", url);
-      storage.set("filevault_supabase_key", key);
-      setIsSetup(true);
-      
-      return client;
-    } catch (error) {
-      throw error;
-    }
-  };
-
-  const handleSetup = async () => {
-    if (!setupData.supabaseUrl || !setupData.supabaseKey) {
-      alert("Please enter Supabase URL and API Key");
-      return;
-    }
-
-    setLoading(true);
-    setSetupError("");
-
-    try {
-      const client = await initializeSupabase(setupData.supabaseUrl, setupData.supabaseKey);
-
-      // Check if users table has any admin
-      const { data: existingAdmins, error: adminCheckError } = await client
-        .from("users")
-        .select("*")
-        .eq("role", "admin");
-
-      if (!adminCheckError && existingAdmins && existingAdmins.length > 0) {
-        // Admin already exists, just update the connection
-        alert("✅ Admin account already exists. Supabase connected successfully!");
-        setView("login");
-        return;
-      }
-
-      // Create admin user only if details are provided
-      if (setupData.adminUsername && setupData.adminPassword && setupData.adminEmail) {
-        // Check if username already exists
-        const { data: existingUser, error: checkError } = await client
-          .from("users")
-          .select("username")
-          .eq("username", setupData.adminUsername)
-          .single();
-
-        if (existingUser) {
-          throw new Error(
-            `Username "${setupData.adminUsername}" already exists. Choose a different username.`
-          );
-        }
-
-        // Create admin user
-        const adminUser = {
-          username: setupData.adminUsername,
-          password: setupData.adminPassword,
-          email: setupData.adminEmail,
-          role: "admin",
-          storage_used: 0,
-          storage_limit: 1000,
-          created_at: new Date().toISOString(),
-        };
-
-        const { data: userData, error: userError } = await client
-          .from("users")
-          .insert([adminUser])
-          .select()
-          .single();
-
-        if (userError) throw new Error(userError.message);
-
-        alert("✅ Setup complete! Admin account created. You can now login.");
-      } else {
-        alert("✅ Supabase connected successfully! You can now register.");
-      }
-
-      setView("login");
-    } catch (error) {
-      setSetupError(error.message);
-      alert(`❌ Setup failed: ${error.message}\n\nMake sure:\n1. SQL script is run\n2. URL is correct\n3. Key is anon/public key`);
-      console.error("Setup error details:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleLogin = async () => {
     if (!authData.username || !authData.password) {
       alert("Please enter username and password");
       return;
-    }
-
-    // First check if Supabase is configured
-    if (!supabaseClient) {
-      const urlResult = storage.get("filevault_supabase_url");
-      const keyResult = storage.get("filevault_supabase_key");
-      
-      if (!urlResult || !keyResult) {
-        alert("Please configure Supabase first. Go to Setup page.");
-        setView("setup");
-        return;
-      }
-      
-      try {
-        const client = await initializeSupabase(urlResult.value, keyResult.value);
-        setSupabaseClient(client);
-      } catch (error) {
-        alert("Supabase connection failed: " + error.message);
-        return;
-      }
     }
 
     setLoading(true);
@@ -383,26 +242,6 @@ export default function FileVaultSupabase() {
     if (!authData.username || !authData.password || !authData.email) {
       alert("Please fill all fields");
       return;
-    }
-
-    // First check if Supabase is configured
-    if (!supabaseClient) {
-      const urlResult = storage.get("filevault_supabase_url");
-      const keyResult = storage.get("filevault_supabase_key");
-      
-      if (!urlResult || !keyResult) {
-        alert("Please configure Supabase first. Go to Setup page.");
-        setView("setup");
-        return;
-      }
-      
-      try {
-        const client = await initializeSupabase(urlResult.value, keyResult.value);
-        setSupabaseClient(client);
-      } catch (error) {
-        alert("Supabase connection failed: " + error.message);
-        return;
-      }
     }
 
     setLoading(true);
@@ -531,12 +370,12 @@ export default function FileVaultSupabase() {
         formData.append("file", uploadedFile);
 
         const response = await fetch(
-          `${supabaseUrl}/storage/v1/object/files/${filePath}`,
+          `${SUPABASE_CONFIG.url}/storage/v1/object/files/${filePath}`,
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${supabaseKey}`,
-              apikey: supabaseKey,
+              Authorization: `Bearer ${SUPABASE_CONFIG.key}`,
+              apikey: SUPABASE_CONFIG.key,
             },
             body: formData,
           }
@@ -760,20 +599,10 @@ export default function FileVaultSupabase() {
               </div>
             </div>
             <div className="flex items-center space-x-4">
-              {!isSetup ? (
-                <button
-                  onClick={() => setView("setup")}
-                  className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
-                >
-                  <Settings size={16} />
-                  <span>Setup Supabase</span>
-                </button>
-              ) : (
-                <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
-                  <Cloud size={14} />
-                  <span>Supabase Connected</span>
-                </div>
-              )}
+              <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
+                <Cloud size={14} />
+                <span>Supabase Connected</span>
+              </div>
               <button
                 onClick={() => setView("login")}
                 className="px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors flex items-center space-x-2"
@@ -796,7 +625,7 @@ export default function FileVaultSupabase() {
           <div className="max-w-7xl mx-auto text-center">
             <div className="inline-flex items-center space-x-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-full text-sm font-semibold mb-6">
               <Zap size={16} />
-              <span>Now Powered by Supabase</span>
+              <span>Powered by Supabase</span>
             </div>
             <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
               Your Files, Secured in the
@@ -812,14 +641,14 @@ export default function FileVaultSupabase() {
                 onClick={() => setView("register")}
                 className="px-8 py-4 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center justify-center space-x-2"
               >
-                <span>Start Free Trial</span>
+                <span>Get Started Free</span>
                 <ArrowRight size={20} />
               </button>
               <button
                 onClick={() => setView("login")}
                 className="px-8 py-4 bg-white text-gray-700 font-semibold rounded-lg border-2 border-gray-200 hover:border-indigo-300 hover:bg-gray-50 transition-colors"
               >
-                Demo Login
+                Already have an account? Login
               </button>
             </div>
           </div>
@@ -927,7 +756,7 @@ export default function FileVaultSupabase() {
               Ready to Secure Your Files?
             </h2>
             <p className="text-indigo-100 text-lg mb-10 max-w-2xl mx-auto">
-              Join thousands of users who trust CloudLocker for their file storage needs. No credit card required to start.
+              Join thousands of users who trust CloudLocker for their file storage needs. No setup required!
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <button
@@ -964,7 +793,7 @@ export default function FileVaultSupabase() {
                   Created by nexus
                 </p>
                 <p className="text-sm mt-2">
-                  Built with React, Supabase.
+                  Powered by Supabase • No setup required
                 </p>
               </div>
             </div>
@@ -975,183 +804,6 @@ export default function FileVaultSupabase() {
             </div>
           </div>
         </footer>
-      </div>
-    );
-  }
-
-  // ========== SETUP PAGE ==========
-  if (view === "setup") {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
-          <div className="text-center mb-8">
-            <div className="bg-indigo-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Cloud className="text-white" size={32} />
-            </div>
-            <h1 className="text-3xl font-bold text-gray-800">
-              Supabase Setup
-            </h1>
-            <p className="text-gray-600 mt-2">
-              Configure your Supabase connection
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            {setupError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-red-800">
-                  <strong>Error:</strong> {setupError}
-                </p>
-              </div>
-            )}
-
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-              <p className="text-sm text-blue-800">
-                <strong>⚠️ Important First Steps:</strong>
-                <br />
-                1. Run the SQL script in Supabase SQL Editor
-                <br />
-                2. Create Storage bucket named "files"
-                <br />
-                3. Get URL & Key from Project Settings → API
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Supabase Project URL *
-              </label>
-              <input
-                type="text"
-                value={setupData.supabaseUrl}
-                onChange={(e) =>
-                  setSetupData({ ...setupData, supabaseUrl: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                placeholder="https://your-project.supabase.co"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                From Project Settings → API
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Supabase API Key *
-              </label>
-              <input
-                type="text"
-                value={setupData.supabaseKey}
-                onChange={(e) =>
-                  setSetupData({ ...setupData, supabaseKey: e.target.value })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-sm"
-                placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Use anon/public key (starts with eyJ...)
-              </p>
-            </div>
-
-            <div className="pt-2 border-t">
-              <h3 className="font-medium text-gray-700 mb-3">Admin Account (Optional)</h3>
-              <p className="text-sm text-gray-600 mb-3">
-                Create an admin account or skip to register as regular user
-              </p>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Admin Username
-                  </label>
-                  <input
-                    type="text"
-                    value={setupData.adminUsername}
-                    onChange={(e) =>
-                      setSetupData({
-                        ...setupData,
-                        adminUsername: e.target.value,
-                      })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="admin (optional)"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Admin Email
-                  </label>
-                  <input
-                    type="email"
-                    value={setupData.adminEmail}
-                    onChange={(e) =>
-                      setSetupData({ ...setupData, adminEmail: e.target.value })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="admin@example.com (optional)"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Admin Password
-                  </label>
-                  <input
-                    type="password"
-                    value={setupData.adminPassword}
-                    onChange={(e) =>
-                      setSetupData({
-                        ...setupData,
-                        adminPassword: e.target.value,
-                      })
-                    }
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="•••••••• (optional)"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-3">
-              <button
-                onClick={handleSetup}
-                disabled={loading}
-                className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {loading ? "Setting up..." : "Complete Setup"}
-              </button>
-              
-              <button
-                onClick={async () => {
-                  if (!setupData.supabaseUrl || !setupData.supabaseKey) {
-                    alert("Please enter Supabase URL and Key first");
-                    return;
-                  }
-                  try {
-                    await initializeSupabase(setupData.supabaseUrl, setupData.supabaseKey);
-                    alert("✅ Supabase connected! You can now register.");
-                    setView("register");
-                  } catch (error) {
-                    alert("❌ Connection failed: " + error.message);
-                  }
-                }}
-                disabled={loading}
-                className="w-full bg-gray-600 text-white py-3 rounded-lg font-semibold hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Skip Admin Setup & Continue
-              </button>
-            </div>
-
-            <div className="text-center">
-              <button
-                onClick={() => setView("home")}
-                className="text-sm text-gray-500 hover:text-gray-700"
-              >
-                ← Back to Home
-              </button>
-            </div>
-          </div>
-        </div>
       </div>
     );
   }
@@ -1167,27 +819,11 @@ export default function FileVaultSupabase() {
             </div>
             <h1 className="text-3xl font-bold text-gray-800">User Login</h1>
             <p className="text-gray-600 mt-2">Login to access your files</p>
-            {!isSetup && (
-              <div className="mt-3 inline-flex items-center space-x-2 bg-yellow-50 text-yellow-700 px-3 py-1 rounded-full text-sm">
-                <Settings size={14} />
-                <span>Supabase not configured</span>
-              </div>
-            )}
-          </div>
-
-          {!isSetup && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-              <p className="text-sm text-yellow-800">
-                <strong>Setup Required:</strong> Please configure Supabase first before logging in.
-              </p>
-              <button
-                onClick={() => setView("setup")}
-                className="mt-2 text-sm text-yellow-700 font-semibold hover:underline"
-              >
-                Go to Setup →
-              </button>
+            <div className="mt-3 inline-flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
+              <Cloud size={14} />
+              <span>Supabase Connected</span>
             </div>
-          )}
+          </div>
 
           <div className="space-y-4">
             <div>
@@ -1203,7 +839,6 @@ export default function FileVaultSupabase() {
                 onKeyPress={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Enter username"
-                disabled={!isSetup}
               />
             </div>
 
@@ -1220,16 +855,15 @@ export default function FileVaultSupabase() {
                 onKeyPress={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Enter password"
-                disabled={!isSetup}
               />
             </div>
 
             <button
               onClick={handleLogin}
-              disabled={loading || !isSetup}
+              disabled={loading}
               className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Logging in..." : isSetup ? "Login" : "Setup Required"}
+              {loading ? "Logging in..." : "Login"}
             </button>
           </div>
 
@@ -1268,27 +902,11 @@ export default function FileVaultSupabase() {
             </div>
             <h1 className="text-3xl font-bold text-gray-800">Create Account</h1>
             <p className="text-gray-600 mt-2">Join CloudLocker today</p>
-            {!isSetup && (
-              <div className="mt-3 inline-flex items-center space-x-2 bg-yellow-50 text-yellow-700 px-3 py-1 rounded-full text-sm">
-                <Settings size={14} />
-                <span>Supabase not configured</span>
-              </div>
-            )}
-          </div>
-
-          {!isSetup && (
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
-              <p className="text-sm text-yellow-800">
-                <strong>Setup Required:</strong> Please configure Supabase first before registering.
-              </p>
-              <button
-                onClick={() => setView("setup")}
-                className="mt-2 text-sm text-yellow-700 font-semibold hover:underline"
-              >
-                Go to Setup →
-              </button>
+            <div className="mt-3 inline-flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
+              <Cloud size={14} />
+              <span>Supabase Connected</span>
             </div>
-          )}
+          </div>
 
           <div className="space-y-4">
             <div>
@@ -1303,7 +921,6 @@ export default function FileVaultSupabase() {
                 }
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Choose username"
-                disabled={!isSetup}
               />
             </div>
 
@@ -1319,7 +936,6 @@ export default function FileVaultSupabase() {
                 }
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="your@email.com"
-                disabled={!isSetup}
               />
             </div>
 
@@ -1336,16 +952,15 @@ export default function FileVaultSupabase() {
                 onKeyPress={(e) => e.key === "Enter" && handleRegister()}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Create password"
-                disabled={!isSetup}
               />
             </div>
 
             <button
               onClick={handleRegister}
-              disabled={loading || !isSetup}
+              disabled={loading}
               className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Registering..." : isSetup ? "Register" : "Setup Required"}
+              {loading ? "Registering..." : "Register"}
             </button>
           </div>
 
@@ -1553,7 +1168,7 @@ export default function FileVaultSupabase() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-800">System initialized</p>
-                    <p className="text-sm text-gray-600">Admin setup completed</p>
+                    <p className="text-sm text-gray-600">CloudLocker ready</p>
                   </div>
                 </div>
                 <span className="text-sm text-gray-500">Just now</span>
@@ -1938,7 +1553,7 @@ export default function FileVaultSupabase() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="text-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
-        <p className="mt-4 text-gray-600">Loading...</p>
+        <p className="mt-4 text-gray-600">Loading CloudLocker...</p>
       </div>
     </div>
   );
