@@ -49,6 +49,7 @@ export default function FileVaultSupabase() {
   const [loading, setLoading] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [adminStats, setAdminStats] = useState(null);
+  const [setupError, setSetupError] = useState("");
 
   const [setupData, setSetupData] = useState({
     adminUsername: "",
@@ -94,6 +95,7 @@ export default function FileVaultSupabase() {
           setSupabaseClient(client);
 
           try {
+            // Test connection by checking if users table exists
             const { data, error } = await client.from("users").select("count");
             if (!error) {
               setIsSupabaseConnected(true);
@@ -113,7 +115,7 @@ export default function FileVaultSupabase() {
     }
   };
 
-  // Supabase Helper Functions for UUID
+  // Supabase Helper Functions
   const supabaseRequest = async (action, table, data = {}) => {
     if (!supabaseClient) {
       throw new Error("Supabase not configured");
@@ -194,37 +196,10 @@ export default function FileVaultSupabase() {
     }
   };
 
-  const handleSetup = async () => {
-    if (
-      !setupData.adminUsername ||
-      !setupData.adminPassword ||
-      !setupData.adminEmail ||
-      !setupData.supabaseUrl ||
-      !setupData.supabaseKey
-    ) {
-      alert("Please fill all fields");
-      return;
-    }
-
-    setLoading(true);
-
+  const initializeSupabase = async (url, key) => {
     try {
-      // Initialize Supabase client
-      const client = createClient(setupData.supabaseUrl, setupData.supabaseKey);
-
-      // First, check if username already exists
-      const { data: existingUser, error: checkError } = await client
-        .from("users")
-        .select("username")
-        .eq("username", setupData.adminUsername)
-        .single();
-
-      if (existingUser) {
-        throw new Error(
-          `Username "${setupData.adminUsername}" already exists. Choose a different username.`
-        );
-      }
-
+      const client = createClient(url, key);
+      
       // Test connection
       const { error: testError } = await client
         .from("users")
@@ -235,75 +210,91 @@ export default function FileVaultSupabase() {
         throw new Error("Supabase connection failed: " + testError.message);
       }
 
-      // Create admin user
-      const adminUser = {
-        username: setupData.adminUsername,
-        password: setupData.adminPassword,
-        email: setupData.adminEmail,
-        role: "admin",
-        storage_used: 0,
-        storage_limit: 1000,
-        created_at: new Date().toISOString(),
-      };
-
-      const { data: userData, error: userError } = await client
-        .from("users")
-        .insert([adminUser])
-        .select()
-        .single();
-
-      if (userError) throw new Error(userError.message);
-
-      // Create storage bucket
-      try {
-        const { error: bucketError } = await client.storage.createBucket(
-          "files",
-          {
-            public: false,
-            allowedMimeTypes: [
-              "image/*",
-              "application/pdf",
-              "text/*",
-              "application/*",
-            ],
-            fileSizeLimit: 52428800,
-          }
-        );
-
-        if (bucketError && !bucketError.message.includes("already exists")) {
-          console.log("Bucket note:", bucketError.message);
-        }
-      } catch (bucketError) {
-        console.log("Bucket setup:", bucketError);
-      }
-
-      // Save setup info to localStorage
-      storage.set("filevault_setup", "true");
-      storage.set("filevault_supabase_url", setupData.supabaseUrl);
-      storage.set("filevault_supabase_key", setupData.supabaseKey);
-      storage.set("filevault_appname", setupData.appName);
-
       setSupabaseClient(client);
-      setSupabaseUrl(setupData.supabaseUrl);
-      setSupabaseKey(setupData.supabaseKey);
-      setIsSetup(true);
+      setSupabaseUrl(url);
+      setSupabaseKey(key);
       setIsSupabaseConnected(true);
-      setView("home");
-
-      alert("✅ Setup complete! Admin account created. You can now login.");
+      
+      // Save to localStorage for future use
+      storage.set("filevault_setup", "true");
+      storage.set("filevault_supabase_url", url);
+      storage.set("filevault_supabase_key", key);
+      setIsSetup(true);
+      
+      return client;
     } catch (error) {
-      if (
-        error.message.includes("duplicate key") ||
-        error.message.includes("already exists")
-      ) {
-        alert(
-          `❌ Username "${setupData.adminUsername}" is already taken. Please choose a different username.`
-        );
-      } else {
-        alert(
-          `❌ Setup failed: ${error.message}\n\nMake sure:\n1. SQL script is run\n2. URL is correct\n3. Key is anon/public key`
-        );
+      throw error;
+    }
+  };
+
+  const handleSetup = async () => {
+    if (!setupData.supabaseUrl || !setupData.supabaseKey) {
+      alert("Please enter Supabase URL and API Key");
+      return;
+    }
+
+    setLoading(true);
+    setSetupError("");
+
+    try {
+      const client = await initializeSupabase(setupData.supabaseUrl, setupData.supabaseKey);
+
+      // Check if users table has any admin
+      const { data: existingAdmins, error: adminCheckError } = await client
+        .from("users")
+        .select("*")
+        .eq("role", "admin");
+
+      if (!adminCheckError && existingAdmins && existingAdmins.length > 0) {
+        // Admin already exists, just update the connection
+        alert("✅ Admin account already exists. Supabase connected successfully!");
+        setView("login");
+        return;
       }
+
+      // Create admin user only if details are provided
+      if (setupData.adminUsername && setupData.adminPassword && setupData.adminEmail) {
+        // Check if username already exists
+        const { data: existingUser, error: checkError } = await client
+          .from("users")
+          .select("username")
+          .eq("username", setupData.adminUsername)
+          .single();
+
+        if (existingUser) {
+          throw new Error(
+            `Username "${setupData.adminUsername}" already exists. Choose a different username.`
+          );
+        }
+
+        // Create admin user
+        const adminUser = {
+          username: setupData.adminUsername,
+          password: setupData.adminPassword,
+          email: setupData.adminEmail,
+          role: "admin",
+          storage_used: 0,
+          storage_limit: 1000,
+          created_at: new Date().toISOString(),
+        };
+
+        const { data: userData, error: userError } = await client
+          .from("users")
+          .insert([adminUser])
+          .select()
+          .single();
+
+        if (userError) throw new Error(userError.message);
+
+        alert("✅ Setup complete! Admin account created. You can now login.");
+      } else {
+        alert("✅ Supabase connected successfully! You can now register.");
+      }
+
+      setView("login");
+    } catch (error) {
+      setSetupError(error.message);
+      alert(`❌ Setup failed: ${error.message}\n\nMake sure:\n1. SQL script is run\n2. URL is correct\n3. Key is anon/public key`);
       console.error("Setup error details:", error);
     } finally {
       setLoading(false);
@@ -314,6 +305,26 @@ export default function FileVaultSupabase() {
     if (!authData.username || !authData.password) {
       alert("Please enter username and password");
       return;
+    }
+
+    // First check if Supabase is configured
+    if (!supabaseClient) {
+      const urlResult = storage.get("filevault_supabase_url");
+      const keyResult = storage.get("filevault_supabase_key");
+      
+      if (!urlResult || !keyResult) {
+        alert("Please configure Supabase first. Go to Setup page.");
+        setView("setup");
+        return;
+      }
+      
+      try {
+        const client = await initializeSupabase(urlResult.value, keyResult.value);
+        setSupabaseClient(client);
+      } catch (error) {
+        alert("Supabase connection failed: " + error.message);
+        return;
+      }
     }
 
     setLoading(true);
@@ -327,7 +338,7 @@ export default function FileVaultSupabase() {
         
         if (result.document.role === "admin") {
           setView("adminDashboard");
-          loadAdminData();
+          await loadAdminData();
         } else {
           setView("dashboard");
           await loadUserData(result.document.id);
@@ -372,6 +383,26 @@ export default function FileVaultSupabase() {
     if (!authData.username || !authData.password || !authData.email) {
       alert("Please fill all fields");
       return;
+    }
+
+    // First check if Supabase is configured
+    if (!supabaseClient) {
+      const urlResult = storage.get("filevault_supabase_url");
+      const keyResult = storage.get("filevault_supabase_key");
+      
+      if (!urlResult || !keyResult) {
+        alert("Please configure Supabase first. Go to Setup page.");
+        setView("setup");
+        return;
+      }
+      
+      try {
+        const client = await initializeSupabase(urlResult.value, keyResult.value);
+        setSupabaseClient(client);
+      } catch (error) {
+        alert("Supabase connection failed: " + error.message);
+        return;
+      }
     }
 
     setLoading(true);
@@ -440,7 +471,6 @@ export default function FileVaultSupabase() {
   };
 
   // ========== FILE MANAGEMENT FUNCTIONS ==========
-
   const handleCreateFolder = async () => {
     if (!newFolderName.trim()) return;
     if (!currentUser) return;
@@ -495,10 +525,8 @@ export default function FileVaultSupabase() {
         .upload(filePath, uploadedFile);
 
       if (uploadError) {
-        // If upload fails due to RLS, try alternative method
         console.log("Direct upload failed, trying signed URL method:", uploadError);
         
-        // Create signed URL for upload
         const formData = new FormData();
         formData.append("file", uploadedFile);
 
@@ -522,22 +550,22 @@ export default function FileVaultSupabase() {
         }
       }
 
-      // Get signed URL for preview (valid for 1 hour)
+      // Get signed URL for preview
       const { data: signedUrlData, error: signedUrlError } =
         await supabaseClient.storage
           .from("files")
           .createSignedUrl(filePath, 60 * 60);
 
+      let fileUrl = "";
       if (signedUrlError) {
         console.log("Signed URL error:", signedUrlError);
-        // Try to get public URL as fallback
         const { data: publicUrlData } = supabaseClient.storage
           .from("files")
           .getPublicUrl(filePath);
           
-        var fileUrl = publicUrlData.publicUrl;
+        fileUrl = publicUrlData.publicUrl;
       } else {
-        var fileUrl = signedUrlData.signedUrl;
+        fileUrl = signedUrlData.signedUrl;
       }
 
       // Create file record
@@ -573,7 +601,7 @@ export default function FileVaultSupabase() {
       alert(`Failed to upload file: ${error.message}`);
     } finally {
       setLoading(false);
-      e.target.value = "";
+      if (e.target) e.target.value = "";
     }
   };
 
@@ -631,7 +659,6 @@ export default function FileVaultSupabase() {
 
     try {
       if (file.public_url) {
-        // Try to open/download the file
         const link = document.createElement("a");
         link.href = file.public_url;
         link.download = file.name;
@@ -642,7 +669,6 @@ export default function FileVaultSupabase() {
         return;
       }
 
-      // Fallback to storage download
       if (file.storage_path) {
         const { data, error } = await supabaseClient.storage
           .from("files")
@@ -722,7 +748,6 @@ export default function FileVaultSupabase() {
   if (view === "home") {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
-        {/* Navigation */}
         <nav className="bg-white shadow-sm border-b">
           <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -738,37 +763,35 @@ export default function FileVaultSupabase() {
               {!isSetup ? (
                 <button
                   onClick={() => setView("setup")}
-                  className="px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors flex items-center space-x-2"
+                  className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
                 >
                   <Settings size={16} />
-                  <span>Admin Setup</span>
+                  <span>Setup Supabase</span>
                 </button>
               ) : (
-                <>
-                  <button
-                    onClick={() => setView("login")}
-                    className="px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors flex items-center space-x-2"
-                  >
-                    <User size={16} />
-                    <span>User Login</span>
-                  </button>
-                  <button
-                    onClick={() => {
-                      setAuthData({ username: "", password: "", email: "" });
-                      setView("adminLogin");
-                    }}
-                    className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
-                  >
-                    <Shield size={16} />
-                    <span>Admin Login</span>
-                  </button>
-                </>
+                <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
+                  <Cloud size={14} />
+                  <span>Supabase Connected</span>
+                </div>
               )}
+              <button
+                onClick={() => setView("login")}
+                className="px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors flex items-center space-x-2"
+              >
+                <User size={16} />
+                <span>Login</span>
+              </button>
+              <button
+                onClick={() => setView("register")}
+                className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+              >
+                <span>Register</span>
+                <ArrowRight size={16} />
+              </button>
             </div>
           </div>
         </nav>
 
-        {/* Hero Section */}
         <section className="py-20 px-4">
           <div className="max-w-7xl mx-auto text-center">
             <div className="inline-flex items-center space-x-2 bg-indigo-100 text-indigo-700 px-4 py-2 rounded-full text-sm font-semibold mb-6">
@@ -802,7 +825,6 @@ export default function FileVaultSupabase() {
           </div>
         </section>
 
-        {/* Features Section */}
         <section className="py-20 px-4 bg-white">
           <div className="max-w-7xl mx-auto">
             <div className="text-center mb-16">
@@ -814,7 +836,6 @@ export default function FileVaultSupabase() {
               </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {/* Feature 1 */}
               <div className="bg-gray-50 p-8 rounded-2xl hover:shadow-lg transition-shadow">
                 <div className="bg-indigo-100 w-16 h-16 rounded-xl flex items-center justify-center mb-6">
                   <Shield className="text-indigo-600" size={28} />
@@ -827,7 +848,6 @@ export default function FileVaultSupabase() {
                 </p>
               </div>
 
-              {/* Feature 2 */}
               <div className="bg-gray-50 p-8 rounded-2xl hover:shadow-lg transition-shadow">
                 <div className="bg-green-100 w-16 h-16 rounded-xl flex items-center justify-center mb-6">
                   <Cloud className="text-green-600" size={28} />
@@ -840,7 +860,6 @@ export default function FileVaultSupabase() {
                 </p>
               </div>
 
-              {/* Feature 3 */}
               <div className="bg-gray-50 p-8 rounded-2xl hover:shadow-lg transition-shadow">
                 <div className="bg-purple-100 w-16 h-16 rounded-xl flex items-center justify-center mb-6">
                   <Users className="text-purple-600" size={28} />
@@ -856,7 +875,6 @@ export default function FileVaultSupabase() {
           </div>
         </section>
 
-        {/* Tech Stack Section */}
         <section className="py-20 px-4 bg-gray-50">
           <div className="max-w-7xl mx-auto">
             <div className="text-center mb-16">
@@ -903,7 +921,6 @@ export default function FileVaultSupabase() {
           </div>
         </section>
 
-        {/* CTA Section */}
         <section className="py-20 px-4 bg-gradient-to-r from-indigo-600 to-purple-600">
           <div className="max-w-4xl mx-auto text-center">
             <h2 className="text-3xl font-bold text-white mb-6">
@@ -930,7 +947,6 @@ export default function FileVaultSupabase() {
           </div>
         </section>
 
-        {/* Footer */}
         <footer className="bg-gray-900 text-gray-400 py-12 px-4">
           <div className="max-w-7xl mx-auto">
             <div className="flex flex-col md:flex-row justify-between items-center">
@@ -963,87 +979,6 @@ export default function FileVaultSupabase() {
     );
   }
 
-  // ========== ADMIN LOGIN PAGE ==========
-  if (view === "adminLogin") {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-md w-full">
-          <div className="text-center mb-8">
-            <div className="bg-indigo-600 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Shield className="text-white" size={32} />
-            </div>
-            <h1 className="text-3xl font-bold text-gray-800">Admin Login</h1>
-            <p className="text-gray-600 mt-2">Access admin dashboard</p>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Username
-              </label>
-              <input
-                type="text"
-                value={authData.username}
-                onChange={(e) =>
-                  setAuthData({ ...authData, username: e.target.value })
-                }
-                onKeyPress={(e) => e.key === "Enter" && handleLogin()}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                placeholder="Enter admin username"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Password
-              </label>
-              <input
-                type="password"
-                value={authData.password}
-                onChange={(e) =>
-                  setAuthData({ ...authData, password: e.target.value })
-                }
-                onKeyPress={(e) => e.key === "Enter" && handleLogin()}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                placeholder="Enter admin password"
-              />
-            </div>
-
-            <button
-              onClick={handleLogin}
-              disabled={loading}
-              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? "Logging in..." : "Login as Admin"}
-            </button>
-          </div>
-
-          <div className="mt-6 text-center">
-            <p className="text-gray-600">
-              <button
-                onClick={() => {
-                  setAuthData({ username: "", password: "", email: "" });
-                  setView("login");
-                }}
-                className="text-indigo-600 font-semibold hover:underline"
-              >
-                User Login Instead
-              </button>
-            </p>
-            <p className="text-gray-600 mt-4">
-              <button
-                onClick={() => setView("home")}
-                className="text-sm text-gray-500 hover:text-gray-700"
-              >
-                ← Back to Home
-              </button>
-            </p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   // ========== SETUP PAGE ==========
   if (view === "setup") {
     return (
@@ -1054,14 +989,22 @@ export default function FileVaultSupabase() {
               <Cloud className="text-white" size={32} />
             </div>
             <h1 className="text-3xl font-bold text-gray-800">
-              Admin Setup
+              Supabase Setup
             </h1>
             <p className="text-gray-600 mt-2">
-              Configure Supabase & Create Admin Account
+              Configure your Supabase connection
             </p>
           </div>
 
           <div className="space-y-4">
+            {setupError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-red-800">
+                  <strong>Error:</strong> {setupError}
+                </p>
+              </div>
+            )}
+
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
               <p className="text-sm text-blue-800">
                 <strong>⚠️ Important First Steps:</strong>
@@ -1111,11 +1054,14 @@ export default function FileVaultSupabase() {
             </div>
 
             <div className="pt-2 border-t">
-              <h3 className="font-medium text-gray-700 mb-3">Admin Account</h3>
+              <h3 className="font-medium text-gray-700 mb-3">Admin Account (Optional)</h3>
+              <p className="text-sm text-gray-600 mb-3">
+                Create an admin account or skip to register as regular user
+              </p>
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Admin Username *
+                    Admin Username
                   </label>
                   <input
                     type="text"
@@ -1127,13 +1073,13 @@ export default function FileVaultSupabase() {
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="admin"
+                    placeholder="admin (optional)"
                   />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Admin Email *
+                    Admin Email
                   </label>
                   <input
                     type="email"
@@ -1142,13 +1088,13 @@ export default function FileVaultSupabase() {
                       setSetupData({ ...setupData, adminEmail: e.target.value })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="admin@example.com"
+                    placeholder="admin@example.com (optional)"
                   />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Admin Password *
+                    Admin Password
                   </label>
                   <input
                     type="password"
@@ -1160,19 +1106,41 @@ export default function FileVaultSupabase() {
                       })
                     }
                     className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder="••••••••"
+                    placeholder="•••••••• (optional)"
                   />
                 </div>
               </div>
             </div>
 
-            <button
-              onClick={handleSetup}
-              disabled={loading}
-              className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed mt-4"
-            >
-              {loading ? "Setting up..." : "Complete Setup"}
-            </button>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleSetup}
+                disabled={loading}
+                className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? "Setting up..." : "Complete Setup"}
+              </button>
+              
+              <button
+                onClick={async () => {
+                  if (!setupData.supabaseUrl || !setupData.supabaseKey) {
+                    alert("Please enter Supabase URL and Key first");
+                    return;
+                  }
+                  try {
+                    await initializeSupabase(setupData.supabaseUrl, setupData.supabaseKey);
+                    alert("✅ Supabase connected! You can now register.");
+                    setView("register");
+                  } catch (error) {
+                    alert("❌ Connection failed: " + error.message);
+                  }
+                }}
+                disabled={loading}
+                className="w-full bg-gray-600 text-white py-3 rounded-lg font-semibold hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Skip Admin Setup & Continue
+              </button>
+            </div>
 
             <div className="text-center">
               <button
@@ -1199,13 +1167,27 @@ export default function FileVaultSupabase() {
             </div>
             <h1 className="text-3xl font-bold text-gray-800">User Login</h1>
             <p className="text-gray-600 mt-2">Login to access your files</p>
-            {isSupabaseConnected && (
-              <div className="mt-3 inline-flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
-                <Cloud size={14} />
-                <span>Supabase Connected</span>
+            {!isSetup && (
+              <div className="mt-3 inline-flex items-center space-x-2 bg-yellow-50 text-yellow-700 px-3 py-1 rounded-full text-sm">
+                <Settings size={14} />
+                <span>Supabase not configured</span>
               </div>
             )}
           </div>
+
+          {!isSetup && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-yellow-800">
+                <strong>Setup Required:</strong> Please configure Supabase first before logging in.
+              </p>
+              <button
+                onClick={() => setView("setup")}
+                className="mt-2 text-sm text-yellow-700 font-semibold hover:underline"
+              >
+                Go to Setup →
+              </button>
+            </div>
+          )}
 
           <div className="space-y-4">
             <div>
@@ -1221,6 +1203,7 @@ export default function FileVaultSupabase() {
                 onKeyPress={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Enter username"
+                disabled={!isSetup}
               />
             </div>
 
@@ -1237,15 +1220,16 @@ export default function FileVaultSupabase() {
                 onKeyPress={(e) => e.key === "Enter" && handleLogin()}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Enter password"
+                disabled={!isSetup}
               />
             </div>
 
             <button
               onClick={handleLogin}
-              disabled={loading}
+              disabled={loading || !isSetup}
               className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Logging in..." : "Login"}
+              {loading ? "Logging in..." : isSetup ? "Login" : "Setup Required"}
             </button>
           </div>
 
@@ -1284,7 +1268,27 @@ export default function FileVaultSupabase() {
             </div>
             <h1 className="text-3xl font-bold text-gray-800">Create Account</h1>
             <p className="text-gray-600 mt-2">Join CloudLocker today</p>
+            {!isSetup && (
+              <div className="mt-3 inline-flex items-center space-x-2 bg-yellow-50 text-yellow-700 px-3 py-1 rounded-full text-sm">
+                <Settings size={14} />
+                <span>Supabase not configured</span>
+              </div>
+            )}
           </div>
+
+          {!isSetup && (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 mb-4">
+              <p className="text-sm text-yellow-800">
+                <strong>Setup Required:</strong> Please configure Supabase first before registering.
+              </p>
+              <button
+                onClick={() => setView("setup")}
+                className="mt-2 text-sm text-yellow-700 font-semibold hover:underline"
+              >
+                Go to Setup →
+              </button>
+            </div>
+          )}
 
           <div className="space-y-4">
             <div>
@@ -1299,6 +1303,7 @@ export default function FileVaultSupabase() {
                 }
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Choose username"
+                disabled={!isSetup}
               />
             </div>
 
@@ -1314,6 +1319,7 @@ export default function FileVaultSupabase() {
                 }
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="your@email.com"
+                disabled={!isSetup}
               />
             </div>
 
@@ -1330,15 +1336,16 @@ export default function FileVaultSupabase() {
                 onKeyPress={(e) => e.key === "Enter" && handleRegister()}
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 placeholder="Create password"
+                disabled={!isSetup}
               />
             </div>
 
             <button
               onClick={handleRegister}
-              disabled={loading}
+              disabled={loading || !isSetup}
               className="w-full bg-indigo-600 text-white py-3 rounded-lg font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Registering..." : "Register"}
+              {loading ? "Registering..." : isSetup ? "Register" : "Setup Required"}
             </button>
           </div>
 
@@ -1576,353 +1583,363 @@ export default function FileVaultSupabase() {
   }
 
   // ========== USER DASHBOARD PAGE ==========
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {loading && (
-        <div className="fixed top-0 left-0 right-0 bg-indigo-600 text-white text-center py-2 z-50">
-          Processing...
-        </div>
-      )}
-
-      <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
-              <Lock className="text-white" size={20} />
-            </div>
-            <div>
-              <h1 className="text-xl font-bold text-gray-800">CloudLocker</h1>
-              <p className="text-sm text-gray-600">
-                Welcome, {currentUser?.username}
-              </p>
-            </div>
+  if (view === "dashboard" && currentUser) {
+    return (
+      <div className="min-h-screen bg-gray-50">
+        {loading && (
+          <div className="fixed top-0 left-0 right-0 bg-indigo-600 text-white text-center py-2 z-50">
+            Processing...
           </div>
+        )}
 
-          <div className="flex items-center space-x-4">
-            <div className="text-right">
-              <p className="text-sm font-medium text-gray-700">
-                {currentUser?.storage_used?.toFixed(2) || 0} /{" "}
-                {currentUser?.storage_limit || 500} MB
-              </p>
-              <div className="w-32 h-2 bg-gray-200 rounded-full mt-1">
-                <div
-                  className="h-full bg-indigo-600 rounded-full"
-                  style={{
-                    width: `${
-                      ((currentUser?.storage_used || 0) /
-                        (currentUser?.storage_limit || 500)) *
-                      100
-                    }%`,
-                  }}
-                />
+        <header className="bg-white shadow-sm border-b">
+          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
+                <Lock className="text-white" size={20} />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-gray-800">CloudLocker</h1>
+                <p className="text-sm text-gray-600">
+                  Welcome, {currentUser?.username}
+                </p>
               </div>
             </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-            >
-              <LogOut size={18} />
-              <span>Logout</span>
-            </button>
-          </div>
-        </div>
-      </header>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
-        <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center space-x-3">
-              <label className="bg-indigo-600 text-white px-4 py-2 rounded-lg cursor-pointer hover:bg-indigo-700 transition-colors flex items-center space-x-2">
-                <Upload size={18} />
-                <span>Upload File</span>
-                <input
-                  type="file"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  disabled={loading}
-                />
-              </label>
-
+            <div className="flex items-center space-x-4">
+              <div className="text-right">
+                <p className="text-sm font-medium text-gray-700">
+                  {currentUser?.storage_used?.toFixed(2) || 0} /{" "}
+                  {currentUser?.storage_limit || 500} MB
+                </p>
+                <div className="w-32 h-2 bg-gray-200 rounded-full mt-1">
+                  <div
+                    className="h-full bg-indigo-600 rounded-full"
+                    style={{
+                      width: `${
+                        ((currentUser?.storage_used || 0) /
+                          (currentUser?.storage_limit || 500)) *
+                        100
+                      }%`,
+                    }}
+                  />
+                </div>
+              </div>
               <button
-                onClick={() => setShowNewFolder(true)}
-                disabled={loading}
-                className="bg-gray-100 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors flex items-center space-x-2 disabled:opacity-50"
+                onClick={handleLogout}
+                className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
               >
-                <Plus size={18} />
-                <span>New Folder</span>
+                <LogOut size={18} />
+                <span>Logout</span>
               </button>
-
-              {currentFolder && (
-                <button
-                  onClick={() => setCurrentFolder(null)}
-                  className="text-indigo-600 hover:underline"
-                >
-                  ← Back to Home
-                </button>
-              )}
-            </div>
-
-            <div className="relative">
-              <Search
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
-                size={18}
-              />
-              <input
-                type="text"
-                placeholder="Search files..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-              />
             </div>
           </div>
-        </div>
+        </header>
 
-        <div className="mb-4 text-sm text-gray-600">
-          Current Location:{" "}
-          <span className="font-semibold">{getFolderPath()}</span>
-        </div>
+        <div className="max-w-7xl mx-auto px-4 py-6">
+          <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
+            <div className="flex items-center justify-between flex-wrap gap-4">
+              <div className="flex items-center space-x-3">
+                <label className="bg-indigo-600 text-white px-4 py-2 rounded-lg cursor-pointer hover:bg-indigo-700 transition-colors flex items-center space-x-2">
+                  <Upload size={18} />
+                  <span>Upload File</span>
+                  <input
+                    type="file"
+                    onChange={handleFileUpload}
+                    className="hidden"
+                    disabled={loading}
+                  />
+                </label>
 
-        {showNewFolder && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">Create New Folder</h3>
-                <button onClick={() => setShowNewFolder(false)}>
-                  <X size={20} />
-                </button>
-              </div>
-              <input
-                type="text"
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                placeholder="Folder name"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-4"
-                onKeyPress={(e) => e.key === "Enter" && handleCreateFolder()}
-              />
-              <div className="flex space-x-3">
                 <button
-                  onClick={handleCreateFolder}
+                  onClick={() => setShowNewFolder(true)}
                   disabled={loading}
-                  className="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  className="bg-gray-100 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors flex items-center space-x-2 disabled:opacity-50"
                 >
-                  Create
+                  <Plus size={18} />
+                  <span>New Folder</span>
                 </button>
-                <button
-                  onClick={() => setShowNewFolder(false)}
-                  className="flex-1 bg-gray-200 py-2 rounded-lg hover:bg-gray-300"
-                >
-                  Cancel
-                </button>
+
+                {currentFolder && (
+                  <button
+                    onClick={() => setCurrentFolder(null)}
+                    className="text-indigo-600 hover:underline"
+                  >
+                    ← Back to Home
+                  </button>
+                )}
+              </div>
+
+              <div className="relative">
+                <Search
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400"
+                  size={18}
+                />
+                <input
+                  type="text"
+                  placeholder="Search files..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
               </div>
             </div>
           </div>
-        )}
 
-        {getUserFolders().length > 0 && (
-          <div className="mb-6">
-            <h2 className="text-lg font-semibold mb-3 text-gray-700">
-              Folders
-            </h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {getUserFolders().map((folder) => (
-                <div
-                  key={folder.id}
-                  onClick={() => setCurrentFolder(folder.id)}
-                  className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-200"
-                >
-                  <Folder className="text-indigo-600 mb-2" size={32} />
-                  <p className="text-sm font-medium text-gray-800 truncate">
-                    {folder.name}
-                  </p>
-                </div>
-              ))}
-            </div>
+          <div className="mb-4 text-sm text-gray-600">
+            Current Location:{" "}
+            <span className="font-semibold">{getFolderPath()}</span>
           </div>
-        )}
 
-        <div>
-          <h2 className="text-lg font-semibold mb-3 text-gray-700">Files</h2>
-          {getUserFiles().length === 0 ? (
-            <div className="bg-white rounded-lg shadow-sm p-12 text-center">
-              <File className="mx-auto text-gray-400 mb-4" size={48} />
-              <p className="text-gray-600">
-                No files yet. Upload your first file!
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {getUserFiles().map((file) => (
-                <div
-                  key={file.id}
-                  className="bg-white rounded-lg shadow-sm p-4 border border-gray-200"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center space-x-2 flex-1 min-w-0">
-                      <File
-                        className="text-indigo-600 flex-shrink-0"
-                        size={20}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium text-gray-800 truncate">
-                          {file.name}
-                        </p>
-                        <p className="text-xs text-gray-500">
-                          {formatFileSize(file.size)}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => toggleFileVisibility(file.id)}
-                      className={`p-1 rounded ${
-                        file.is_public ? "text-green-600" : "text-gray-400"
-                      }`}
-                      title={file.is_public ? "Public" : "Private"}
-                    >
-                      {file.is_public ? (
-                        <Share2 size={16} />
-                      ) : (
-                        <Lock size={16} />
-                      )}
-                    </button>
-                  </div>
-
-                  {file.type?.startsWith("image/") && file.public_url && (
-                    <img
-                      src={file.public_url}
-                      alt={file.name}
-                      className="w-full h-32 object-cover rounded mb-3"
-                      onError={(e) => {
-                        // If image fails to load, hide it
-                        e.target.style.display = "none";
-                      }}
-                    />
-                  )}
-
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => setPreviewFile(file)}
-                      className="flex-1 bg-gray-100 px-3 py-2 rounded hover:bg-gray-200 transition-colors flex items-center justify-center space-x-1 text-sm"
-                    >
-                      <Eye size={16} />
-                      <span>View</span>
-                    </button>
-                    <button
-                      onClick={() => handleDownload(file)}
-                      className="flex-1 bg-indigo-600 text-white px-3 py-2 rounded hover:bg-indigo-700 transition-colors flex items-center justify-center space-x-1 text-sm"
-                    >
-                      <Download size={16} />
-                      <span>Download</span>
-                    </button>
-                    <button
-                      onClick={() => handleDeleteFile(file.id)}
-                      className="bg-red-500 text-white px-3 py-2 rounded hover:bg-red-600 transition-colors"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
+          {showNewFolder && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold">Create New Folder</h3>
+                  <button onClick={() => setShowNewFolder(false)}>
+                    <X size={20} />
+                  </button>
                 </div>
-              ))}
+                <input
+                  type="text"
+                  value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  placeholder="Folder name"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg mb-4"
+                  onKeyPress={(e) => e.key === "Enter" && handleCreateFolder()}
+                />
+                <div className="flex space-x-3">
+                  <button
+                    onClick={handleCreateFolder}
+                    disabled={loading}
+                    className="flex-1 bg-indigo-600 text-white py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    Create
+                  </button>
+                  <button
+                    onClick={() => setShowNewFolder(false)}
+                    className="flex-1 bg-gray-200 py-2 rounded-lg hover:bg-gray-300"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
             </div>
           )}
-        </div>
-      </div>
 
-      {previewFile && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
-            <div className="sticky top-0 bg-white border-b p-4 flex items-center justify-between">
-              <h3 className="font-semibold text-gray-800">
-                {previewFile.name}
-              </h3>
-              <button
-                onClick={() => setPreviewFile(null)}
-                className="text-gray-600 hover:text-gray-800"
-              >
-                <X size={24} />
-              </button>
+          {getUserFolders().length > 0 && (
+            <div className="mb-6">
+              <h2 className="text-lg font-semibold mb-3 text-gray-700">
+                Folders
+              </h2>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {getUserFolders().map((folder) => (
+                  <div
+                    key={folder.id}
+                    onClick={() => setCurrentFolder(folder.id)}
+                    className="bg-white p-4 rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-200"
+                  >
+                    <Folder className="text-indigo-600 mb-2" size={32} />
+                    <p className="text-sm font-medium text-gray-800 truncate">
+                      {folder.name}
+                    </p>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="p-4">
-              {(() => {
-                // Fix file type detection (handle comma in extension)
-                const fileName = previewFile.name.toLowerCase();
-                const isImage =
-                  fileName.endsWith(".jpg") ||
-                  fileName.endsWith(".jpeg") ||
-                  fileName.endsWith(".png") ||
-                  fileName.endsWith(".gif") ||
-                  fileName.endsWith(".webp");
-                const isPDF = fileName.endsWith(".pdf");
-                const isText =
-                  fileName.endsWith(".txt") ||
-                  fileName.endsWith(".js") ||
-                  fileName.endsWith(".json") ||
-                  fileName.endsWith(".html") ||
-                  fileName.endsWith(".css");
+          )}
 
-                if (isImage && previewFile.public_url) {
-                  return (
-                    <div className="flex flex-col items-center">
+          <div>
+            <h2 className="text-lg font-semibold mb-3 text-gray-700">Files</h2>
+            {getUserFiles().length === 0 ? (
+              <div className="bg-white rounded-lg shadow-sm p-12 text-center">
+                <File className="mx-auto text-gray-400 mb-4" size={48} />
+                <p className="text-gray-600">
+                  No files yet. Upload your first file!
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {getUserFiles().map((file) => (
+                  <div
+                    key={file.id}
+                    className="bg-white rounded-lg shadow-sm p-4 border border-gray-200"
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center space-x-2 flex-1 min-w-0">
+                        <File
+                          className="text-indigo-600 flex-shrink-0"
+                          size={20}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-gray-800 truncate">
+                            {file.name}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {formatFileSize(file.size)}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => toggleFileVisibility(file.id)}
+                        className={`p-1 rounded ${
+                          file.is_public ? "text-green-600" : "text-gray-400"
+                        }`}
+                        title={file.is_public ? "Public" : "Private"}
+                      >
+                        {file.is_public ? (
+                          <Share2 size={16} />
+                        ) : (
+                          <Lock size={16} />
+                        )}
+                      </button>
+                    </div>
+
+                    {file.type?.startsWith("image/") && file.public_url && (
                       <img
-                        src={previewFile.public_url}
-                        alt={previewFile.name}
-                        className="max-w-full max-h-[70vh] object-contain"
+                        src={file.public_url}
+                        alt={file.name}
+                        className="w-full h-32 object-cover rounded mb-3"
                         onError={(e) => {
-                          e.target.onerror = null;
-                          e.target.src = "https://via.placeholder.com/400x300?text=Image+Not+Available";
+                          e.target.style.display = "none";
                         }}
                       />
-                      <p className="text-sm text-gray-500 mt-2">
-                        Right-click to save image
-                      </p>
-                    </div>
-                  );
-                } else if (isPDF && previewFile.public_url) {
-                  return (
-                    <iframe
-                      src={`${previewFile.public_url}#view=FitH`}
-                      className="w-full h-[70vh] border-0"
-                      title="PDF Preview"
-                    />
-                  );
-                } else if (isText && previewFile.public_url) {
-                  return (
-                    <div className="bg-gray-50 p-4 rounded">
-                      <p className="text-sm text-gray-600 mb-2">
-                        Text preview not available directly. Please download to view.
-                      </p>
+                    )}
+
+                    <div className="flex space-x-2">
                       <button
-                        onClick={() => handleDownload(previewFile)}
-                        className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+                        onClick={() => setPreviewFile(file)}
+                        className="flex-1 bg-gray-100 px-3 py-2 rounded hover:bg-gray-200 transition-colors flex items-center justify-center space-x-1 text-sm"
                       >
-                        Download to View
+                        <Eye size={16} />
+                        <span>View</span>
+                      </button>
+                      <button
+                        onClick={() => handleDownload(file)}
+                        className="flex-1 bg-indigo-600 text-white px-3 py-2 rounded hover:bg-indigo-700 transition-colors flex items-center justify-center space-x-1 text-sm"
+                      >
+                        <Download size={16} />
+                        <span>Download</span>
+                      </button>
+                      <button
+                        onClick={() => handleDeleteFile(file.id)}
+                        className="bg-red-500 text-white px-3 py-2 rounded hover:bg-red-600 transition-colors"
+                      >
+                        <Trash2 size={16} />
                       </button>
                     </div>
-                  );
-                } else {
-                  return (
-                    <div className="text-center py-12">
-                      <File className="mx-auto text-gray-400 mb-4" size={64} />
-                      <p className="text-gray-600">
-                        Preview not available for this file type
-                      </p>
-                      <p className="text-sm text-gray-500 mt-2">
-                        File: {previewFile.name}
-                      </p>
-                      <button
-                        onClick={() => handleDownload(previewFile)}
-                        className="mt-4 bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700"
-                      >
-                        Download File
-                      </button>
-                    </div>
-                  );
-                }
-              })()}
-            </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      )}
+
+        {previewFile && (
+          <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-auto">
+              <div className="sticky top-0 bg-white border-b p-4 flex items-center justify-between">
+                <h3 className="font-semibold text-gray-800">
+                  {previewFile.name}
+                </h3>
+                <button
+                  onClick={() => setPreviewFile(null)}
+                  className="text-gray-600 hover:text-gray-800"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+              <div className="p-4">
+                {(() => {
+                  const fileName = previewFile.name.toLowerCase();
+                  const isImage =
+                    fileName.endsWith(".jpg") ||
+                    fileName.endsWith(".jpeg") ||
+                    fileName.endsWith(".png") ||
+                    fileName.endsWith(".gif") ||
+                    fileName.endsWith(".webp");
+                  const isPDF = fileName.endsWith(".pdf");
+                  const isText =
+                    fileName.endsWith(".txt") ||
+                    fileName.endsWith(".js") ||
+                    fileName.endsWith(".json") ||
+                    fileName.endsWith(".html") ||
+                    fileName.endsWith(".css");
+
+                  if (isImage && previewFile.public_url) {
+                    return (
+                      <div className="flex flex-col items-center">
+                        <img
+                          src={previewFile.public_url}
+                          alt={previewFile.name}
+                          className="max-w-full max-h-[70vh] object-contain"
+                          onError={(e) => {
+                            e.target.onerror = null;
+                            e.target.src = "https://via.placeholder.com/400x300?text=Image+Not+Available";
+                          }}
+                        />
+                        <p className="text-sm text-gray-500 mt-2">
+                          Right-click to save image
+                        </p>
+                      </div>
+                    );
+                  } else if (isPDF && previewFile.public_url) {
+                    return (
+                      <iframe
+                        src={`${previewFile.public_url}#view=FitH`}
+                        className="w-full h-[70vh] border-0"
+                        title="PDF Preview"
+                      />
+                    );
+                  } else if (isText && previewFile.public_url) {
+                    return (
+                      <div className="bg-gray-50 p-4 rounded">
+                        <p className="text-sm text-gray-600 mb-2">
+                          Text preview not available directly. Please download to view.
+                        </p>
+                        <button
+                          onClick={() => handleDownload(previewFile)}
+                          className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+                        >
+                          Download to View
+                        </button>
+                      </div>
+                    );
+                  } else {
+                    return (
+                      <div className="text-center py-12">
+                        <File className="mx-auto text-gray-400 mb-4" size={64} />
+                        <p className="text-gray-600">
+                          Preview not available for this file type
+                        </p>
+                        <p className="text-sm text-gray-500 mt-2">
+                          File: {previewFile.name}
+                        </p>
+                        <button
+                          onClick={() => handleDownload(previewFile)}
+                          className="mt-4 bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700"
+                        >
+                          Download File
+                        </button>
+                      </div>
+                    );
+                  }
+                })()}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // If somehow we reach here without a proper view, show loading
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto"></div>
+        <p className="mt-4 text-gray-600">Loading...</p>
+      </div>
     </div>
   );
 }
