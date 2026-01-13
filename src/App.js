@@ -27,6 +27,7 @@ import {
   Settings,
   BarChart,
   Bell,
+  Menu,
 } from "lucide-react";
 
 import { createClient } from "@supabase/supabase-js";
@@ -52,6 +53,7 @@ export default function FileVaultSupabase() {
   const [loading, setLoading] = useState(false);
   const [allUsers, setAllUsers] = useState([]);
   const [adminStats, setAdminStats] = useState(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const [authData, setAuthData] = useState({
     username: "",
@@ -204,6 +206,7 @@ export default function FileVaultSupabase() {
         }
         
         setAuthData({ username: "", password: "", email: "" });
+        setMobileMenuOpen(false);
       } else {
         alert("Invalid credentials!");
       }
@@ -274,6 +277,7 @@ export default function FileVaultSupabase() {
       alert("✅ Registration successful! Please login.");
       setView("login");
       setAuthData({ username: "", password: "", email: "" });
+      setMobileMenuOpen(false);
     } catch (error) {
       alert("Registration failed: " + error.message);
     } finally {
@@ -307,6 +311,7 @@ export default function FileVaultSupabase() {
     setFolders([]);
     setAllUsers([]);
     setAdminStats(null);
+    setMobileMenuOpen(false);
   };
 
   // ========== FILE MANAGEMENT FUNCTIONS ==========
@@ -588,36 +593,80 @@ export default function FileVaultSupabase() {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50">
         <nav className="bg-white shadow-sm border-b">
-          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
-                <Lock className="text-white" size={20} />
+          <div className="max-w-7xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
+                  <Lock className="text-white" size={20} />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-800">CloudLocker</h1>
+                  <p className="text-sm text-gray-600">Secure Cloud Storage</p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-800">CloudLocker</h1>
-                <p className="text-sm text-gray-600">Secure Cloud Storage</p>
+              
+              {/* Desktop Navigation */}
+              <div className="hidden md:flex items-center space-x-4">
+                <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
+                  <Cloud size={14} />
+                  <span>Supabase Connected</span>
+                </div>
+                <button
+                  onClick={() => setView("login")}
+                  className="px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors flex items-center space-x-2"
+                >
+                  <User size={16} />
+                  <span>Login</span>
+                </button>
+                <button
+                  onClick={() => setView("register")}
+                  className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+                >
+                  <span>Register</span>
+                  <ArrowRight size={16} />
+                </button>
               </div>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-1 rounded-full text-sm">
-                <Cloud size={14} />
-                <span>Supabase Connected</span>
-              </div>
+              
+              {/* Mobile Menu Button */}
               <button
-                onClick={() => setView("login")}
-                className="px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors flex items-center space-x-2"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="md:hidden p-2 rounded-lg hover:bg-gray-100"
               >
-                <User size={16} />
-                <span>Login</span>
-              </button>
-              <button
-                onClick={() => setView("register")}
-                className="px-4 py-2 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
-              >
-                <span>Register</span>
-                <ArrowRight size={16} />
+                {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
               </button>
             </div>
+            
+            {/* Mobile Menu */}
+            {mobileMenuOpen && (
+              <div className="md:hidden mt-4 pb-4 border-t border-gray-200 pt-4">
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center space-x-2 bg-green-50 text-green-700 px-3 py-2 rounded-lg text-sm">
+                    <Cloud size={14} />
+                    <span>Supabase Connected</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setView("login");
+                      setMobileMenuOpen(false);
+                    }}
+                    className="px-4 py-3 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition-colors flex items-center space-x-2"
+                  >
+                    <User size={16} />
+                    <span>Login</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setView("register");
+                      setMobileMenuOpen(false);
+                    }}
+                    className="px-4 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+                  >
+                    <span>Register</span>
+                    <ArrowRight size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </nav>
 
@@ -999,35 +1048,74 @@ export default function FileVaultSupabase() {
         )}
 
         <header className="bg-white shadow-sm border-b">
-          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
-                <Shield className="text-white" size={20} />
+          <div className="max-w-7xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
+                  <Shield className="text-white" size={20} />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-800">Admin Dashboard</h1>
+                  <p className="text-sm text-gray-600">
+                    Welcome, {currentUser?.username} (Admin)
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-800">Admin Dashboard</h1>
-                <p className="text-sm text-gray-600">
-                  Welcome, {currentUser?.username} (Admin)
-                </p>
+
+              {/* Desktop Navigation */}
+              <div className="hidden md:flex items-center space-x-4">
+                <button
+                  onClick={() => setView("dashboard")}
+                  className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors flex items-center space-x-2"
+                >
+                  <User size={16} />
+                  <span>User View</span>
+                </button>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  <LogOut size={18} />
+                  <span>Logout</span>
+                </button>
               </div>
+
+              {/* Mobile Menu Button */}
+              <button
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="md:hidden p-2 rounded-lg hover:bg-gray-100"
+              >
+                {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+              </button>
             </div>
 
-            <div className="flex items-center space-x-4">
-              <button
-                onClick={() => setView("dashboard")}
-                className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors flex items-center space-x-2"
-              >
-                <User size={16} />
-                <span>User View</span>
-              </button>
-              <button
-                onClick={handleLogout}
-                className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-              >
-                <LogOut size={18} />
-                <span>Logout</span>
-              </button>
-            </div>
+            {/* Mobile Menu */}
+            {mobileMenuOpen && (
+              <div className="md:hidden mt-4 pb-4 border-t border-gray-200 pt-4">
+                <div className="flex flex-col space-y-3">
+                  <button
+                    onClick={() => {
+                      setView("dashboard");
+                      setMobileMenuOpen(false);
+                    }}
+                    className="px-4 py-3 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition-colors flex items-center space-x-2"
+                  >
+                    <User size={16} />
+                    <span>User View</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      handleLogout();
+                      setMobileMenuOpen(false);
+                    }}
+                    className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center space-x-2"
+                  >
+                    <LogOut size={18} />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </header>
 
@@ -1208,46 +1296,93 @@ export default function FileVaultSupabase() {
         )}
 
         <header className="bg-white shadow-sm border-b">
-          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
-                <Lock className="text-white" size={20} />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-800">CloudLocker</h1>
-                <p className="text-sm text-gray-600">
-                  Welcome, {currentUser?.username}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-4">
-              <div className="text-right">
-                <p className="text-sm font-medium text-gray-700">
-                  {currentUser?.storage_used?.toFixed(2) || 0} /{" "}
-                  {currentUser?.storage_limit || 500} MB
-                </p>
-                <div className="w-32 h-2 bg-gray-200 rounded-full mt-1">
-                  <div
-                    className="h-full bg-indigo-600 rounded-full"
-                    style={{
-                      width: `${
-                        ((currentUser?.storage_used || 0) /
-                          (currentUser?.storage_limit || 500)) *
-                        100
-                      }%`,
-                    }}
-                  />
+          <div className="max-w-7xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <div className="bg-indigo-600 w-10 h-10 rounded-lg flex items-center justify-center">
+                  <Lock className="text-white" size={20} />
+                </div>
+                <div>
+                  <h1 className="text-xl font-bold text-gray-800">CloudLocker</h1>
+                  <p className="text-sm text-gray-600">
+                    Welcome, {currentUser?.username}
+                  </p>
                 </div>
               </div>
+
+              {/* Desktop Navigation */}
+              <div className="hidden md:flex items-center space-x-4">
+                <div className="text-right">
+                  <p className="text-sm font-medium text-gray-700">
+                    {currentUser?.storage_used?.toFixed(2) || 0} /{" "}
+                    {currentUser?.storage_limit || 500} MB
+                  </p>
+                  <div className="w-32 h-2 bg-gray-200 rounded-full mt-1">
+                    <div
+                      className="h-full bg-indigo-600 rounded-full"
+                      style={{
+                        width: `${
+                          ((currentUser?.storage_used || 0) /
+                            (currentUser?.storage_limit || 500)) *
+                          100
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                >
+                  <LogOut size={18} />
+                  <span>Logout</span>
+                </button>
+              </div>
+
+              {/* Mobile Menu Button */}
               <button
-                onClick={handleLogout}
-                className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                className="md:hidden p-2 rounded-lg hover:bg-gray-100"
               >
-                <LogOut size={18} />
-                <span>Logout</span>
+                {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
               </button>
             </div>
+
+            {/* Mobile Menu */}
+            {mobileMenuOpen && (
+              <div className="md:hidden mt-4 pb-4 border-t border-gray-200 pt-4">
+                <div className="flex flex-col space-y-4">
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-gray-700">
+                      Storage: {currentUser?.storage_used?.toFixed(2) || 0} /{" "}
+                      {currentUser?.storage_limit || 500} MB
+                    </p>
+                    <div className="w-full h-2 bg-gray-200 rounded-full mt-1">
+                      <div
+                        className="h-full bg-indigo-600 rounded-full"
+                        style={{
+                          width: `${
+                            ((currentUser?.storage_used || 0) /
+                              (currentUser?.storage_limit || 500)) *
+                            100
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => {
+                      handleLogout();
+                      setMobileMenuOpen(false);
+                    }}
+                    className="px-4 py-3 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors flex items-center justify-center space-x-2"
+                  >
+                    <LogOut size={18} />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </header>
 
